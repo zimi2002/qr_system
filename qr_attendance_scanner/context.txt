@@ -1,0 +1,165 @@
+// backend code 
+
+function doPost(e) {
+  try {
+    const params = JSON.parse(e.postData.contents);
+
+    if (!params.action) {
+      throw new Error("Missing 'action' in request");
+    }
+
+    if (params.action === 'getStudent' && params.qr_token) {
+      return getStudentByQRToken(params.qr_token);
+    }
+
+    if (params.action === 'activate' && params.qr_token) {
+      return activateStudent(params);
+    }
+
+    return ContentService
+      .createTextOutput(JSON.stringify({
+        success: false,
+        error: "Invalid action or missing qr_token"
+      }))
+      .setMimeType(ContentService.MimeType.JSON);
+
+  } catch (err) {
+    return ContentService
+      .createTextOutput(JSON.stringify({
+        success: false,
+        error: err.toString()
+      }))
+      .setMimeType(ContentService.MimeType.JSON);
+  }
+}
+
+/**
+ * ✅ FUNCTION 1: Get Student by QR Token
+ * Returns student data if found, otherwise returns an error.
+ */
+function getStudentByQRToken(qrToken) {
+  const sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
+  const data = sheet.getDataRange().getValues();
+  
+  if (data.length <= 1) {
+    return ContentService.createTextOutput(JSON.stringify({
+      success: false,
+      error: "No data in sheet"
+    })).setMimeType(ContentService.MimeType.JSON);
+  }
+
+  const headers = data[0];
+  const qrTokenCol = headers.indexOf('qr_token') + 1;
+  const usernameCol = headers.indexOf('Username') + 1;
+  const nameCol = headers.indexOf('Name') + 1;
+  const batchCol = headers.indexOf('Batch') + 1;
+  const mentorCol = headers.indexOf('Mentor Name') + 1;
+  const stsCol = headers.indexOf('sts') + 1;
+  const inTimeCol = headers.indexOf('in_time') + 1;
+  const lastScanCol = headers.indexOf('last_scan') + 1;
+
+  for (let i = 2; i <= data.length; i++) {
+    const rowQR = sheet.getRange(i, qrTokenCol).getValue();
+    if (rowQR === qrToken) {
+      const student = {
+        username: sheet.getRange(i, usernameCol).getValue(),
+        name: sheet.getRange(i, nameCol).getValue(),
+        batch: sheet.getRange(i, batchCol).getValue(),
+        mentor: sheet.getRange(i, mentorCol).getValue(),
+        sts: sheet.getRange(i, stsCol).getValue(),
+        in_time: sheet.getRange(i, inTimeCol).getValue(),
+        last_scan: sheet.getRange(i, lastScanCol).getValue(),
+        qr_token: qrToken
+      };
+      
+      return ContentService.createTextOutput(JSON.stringify({
+        success: true,
+        data: student
+      })).setMimeType(ContentService.MimeType.JSON);
+    }
+  }
+
+  return ContentService.createTextOutput(JSON.stringify({
+    success: false,
+    error: "QR token not found"
+  })).setMimeType(ContentService.MimeType.JSON);
+}
+
+/**
+ * ✅ FUNCTION 2: Activate Student
+ * Updates student row with sts='active', in_time, and last_scan.
+ */
+function activateStudent(params) {
+  const qrToken = params.qr_token;
+  const sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
+  const data = sheet.getDataRange().getValues();
+  
+  if (data.length <= 1) {
+    return ContentService.createTextOutput(JSON.stringify({
+      success: false,
+      error: "No data in sheet"
+    })).setMimeType(ContentService.MimeType.JSON);
+  }
+
+  const headers = data[0];
+  const qrTokenCol = headers.indexOf('qr_token') + 1;
+  const stsCol = headers.indexOf('sts') + 1;
+  const inTimeCol = headers.indexOf('in_time') + 1;
+  const lastScanCol = headers.indexOf('last_scan') + 1;
+  const usernameCol = headers.indexOf('Username') + 1;
+  const nameCol = headers.indexOf('Name') + 1;
+  const batchCol = headers.indexOf('Batch') + 1;
+  const mentorCol = headers.indexOf('Mentor Name') + 1;
+
+  for (let i = 2; i <= data.length; i++) {
+    const rowQR = sheet.getRange(i, qrTokenCol).getValue();
+    if (rowQR === qrToken) {
+      const now = new Date();
+      const formattedTime = Utilities.formatDate(now, Session.getScriptTimeZone(), "HH:mm:ss");
+      const formattedTimestamp = Utilities.formatDate(now, Session.getScriptTimeZone(), "yyyy-MM-dd HH:mm:ss");
+      
+      // Update Google Sheet
+      sheet.getRange(i, stsCol).setValue('active');
+      sheet.getRange(i, inTimeCol).setValue(formattedTime);
+      sheet.getRange(i, lastScanCol).setValue(formattedTimestamp);
+
+      const result = {
+        username: sheet.getRange(i, usernameCol).getValue(),
+        name: sheet.getRange(i, nameCol).getValue(),
+        batch: sheet.getRange(i, batchCol).getValue(),
+        mentor: sheet.getRange(i, mentorCol).getValue(),
+        sts: 'active',
+        in_time: formattedTime,
+        last_scan: formattedTimestamp,
+        qr_token: qrToken
+      };
+
+      return ContentService.createTextOutput(JSON.stringify({
+        success: true,
+        message: "Student activated successfully",
+        data: result
+      })).setMimeType(ContentService.MimeType.JSON);
+    }
+  }
+
+  return ContentService.createTextOutput(JSON.stringify({
+    success: false,
+    error: "QR token not found"
+  })).setMimeType(ContentService.MimeType.JSON);
+}
+// backend code 
+
+// data flow how it should work 
+✅ So yes — your scanner app flow will work like this:
+Step	Description	Backend Function
+📷 Scan QR	App reads QR → extracts qr_token	—
+🧑‍🎓 Fetch student data	App sends { action: "getStudent", qr_token }	getStudentByQRToken()
+🔄 Activate student	App sends { action: "activate", qr_token }	activateStudent()
+📊 Sheet updated	sts = active, in_time and last_scan recorded	—
+
+also if qr is unknown there is qr_failure already designed if success qr_success is also designed if last scan is already presented there is qr_duplicate is also designed so thats the flow 
+
+
+https://script.google.com/macros/s/AKfycby2dINhlZviIwcxOIWdvtnBPnhHWaeZ2B1JLxfKcS-7gZEhb_WR1r-hdRqMC26-fXDuDw/exec this is the base url  
+
+already i have designed the screen now integrate the functionality and the flow 
