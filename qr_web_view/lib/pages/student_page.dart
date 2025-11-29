@@ -60,16 +60,40 @@ class _StudentPageState extends State<StudentPage>
       return;
     }
 
-    final result = await ApiService.fetchStudent(widget.qrToken!);
+    // Fetch with cache - this will return cached data immediately if available
+    // and fetch fresh data in background
+    final cachedResult = await ApiService.fetchStudent(widget.qrToken!, useCache: true);
 
-    setState(() {
-      if (result != null) {
-        student = result;
-      } else {
+    // Update UI immediately with cached data if available
+    if (cachedResult != null) {
+      setState(() {
+        student = cachedResult;
+        isLoading = false;
+      });
+    } else {
+      // No cache available, show loading
+      setState(() {
+        isLoading = true;
+      });
+    }
+
+    // Always fetch fresh data in background to update cache and UI
+    // This ensures we have the latest data even if cache was used
+    final freshResult = await ApiService.fetchStudent(widget.qrToken!, useCache: false);
+
+    // Only update if we got fresh data and widget is still mounted
+    if (mounted && freshResult != null) {
+      setState(() {
+        student = freshResult;
+        isLoading = false;
+      });
+    } else if (mounted && cachedResult == null) {
+      // Only show error if we had no cached data
+      setState(() {
         error = 'No student found for this QR token.';
-      }
-      isLoading = false;
-    });
+        isLoading = false;
+      });
+    }
   }
 
   Future<void> _openGoogleMaps() async {

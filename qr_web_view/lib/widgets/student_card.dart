@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import '../models/student_model.dart';
@@ -7,8 +8,8 @@ class StudentCard extends StatelessWidget {
 
   const StudentCard({super.key, required this.student});
 
-  @override
-  Widget build(BuildContext context) {
+  // Pre-compute QR data string for better performance
+  String get _qrDataString {
     final qrData = {
       "username": student.username,
       "name": student.name,
@@ -20,6 +21,11 @@ class StudentCard extends StatelessWidget {
       "last_scan": student.lastScan,
       "phone": student.phone,
     };
+    return jsonEncode(qrData);
+  }
+
+  @override
+  Widget build(BuildContext context) {
 
     return LayoutBuilder(
       builder: (context, constraints) {
@@ -91,7 +97,7 @@ class StudentCard extends StatelessWidget {
 
                       const SizedBox(height: 16),
 
-                      // QR Code
+                      // QR Code - Wrapped in RepaintBoundary for performance
                       Container(
                         padding: const EdgeInsets.all(12),
                         decoration: BoxDecoration(
@@ -102,11 +108,13 @@ class StudentCard extends StatelessWidget {
                             width: 1,
                           ),
                         ),
-                        child: QrImageView(
-                          data: qrData.toString(),
-                          version: QrVersions.auto,
-                          size: qrSize,
-                          backgroundColor: Colors.white,
+                        child: RepaintBoundary(
+                          child: QrImageView(
+                            data: _qrDataString,
+                            version: 10, // Fixed version for better performance (avoids auto-calculation)
+                            size: qrSize,
+                            backgroundColor: Colors.white,
+                          ),
                         ),
                       ),
                     ],

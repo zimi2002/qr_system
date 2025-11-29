@@ -37,6 +37,13 @@ dependencies:
   mobile_scanner: ^6.0.2
   lottie: ^3.3.2
   http: ^1.1.0
+  supabase_flutter: ^2.5.6
+  flutter_dotenv: ^5.1.0
+  logger: ^2.0.2+1
+  sqflite: ^2.3.0
+  path: ^1.8.3
+  connectivity_plus: ^5.0.2
+  shared_preferences: ^2.2.2
 
 dev_dependencies:
   flutter_test:
@@ -68,6 +75,7 @@ flutter:
     - assets/lottie/success.json
     - assets/lottie/error.json
     - assets/lottie/duplicate.json
+    - .env
 
   # An image asset can refer to one or more resolution-specific "variants", see
   # https://flutter.dev/to/resolution-aware-images

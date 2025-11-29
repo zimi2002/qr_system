@@ -1,8 +1,23 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:go_router/go_router.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:qr_web_view/config/supabase_config.dart';
 import 'package:qr_web_view/pages/student_page.dart';
+import 'package:qr_web_view/pages/stats_page.dart';
 
-void main() {
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+
+  // Load environment variables from .env file
+  await dotenv.load(fileName: ".env");
+
+  // Initialize Supabase
+  await Supabase.initialize(
+    url: SupabaseConfig.supabaseUrl,
+    anonKey: SupabaseConfig.supabaseAnonKey,
+  );
+
   runApp(const MyApp());
 }
 
@@ -11,6 +26,10 @@ final GoRouter _router = GoRouter(
   initialLocation: Uri.base
       .toString(), // Use the full URL including query parameters
   routes: [
+    GoRoute(
+      path: '/stats',
+      builder: (context, state) => const StatsPage(),
+    ),
     GoRoute(
       path: '/',
       builder: (context, state) {

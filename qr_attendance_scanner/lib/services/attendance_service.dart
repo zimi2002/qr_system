@@ -1,139 +1,181 @@
 import 'dart:convert';
+import 'dart:async';
 import 'package:http/http.dart' as http;
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:qr_attendance_scanner/models/student.dart';
+import 'package:qr_attendance_scanner/config/supabase_config.dart';
+import 'package:logger/logger.dart';
 
 class AttendanceService {
-  static const String baseUrl =
-      'https://script.google.com/macros/s/AKfycbzeepAa5h97Y1umew6FAdWwHQSla7kbQXkoytifMcpL3EcUnzv0Kn99AepNhhpveeipFg/exec';
+  // Logger instance for structured logging
+  static final Logger _logger = Logger(
+    printer: PrettyPrinter(
+      methodCount: 0,
+      errorMethodCount: 8,
+      lineLength: 120,
+      colors: true,
+      printEmojis: true,
+      printTime: false,
+    ),
+  );
 
-  // Cache for the actual execution URL to avoid redirect delays
-  static String? _cachedExecutionUrl;
-  static DateTime? _cacheTimestamp;
+  // Persistent HTTP client for connection reuse
+  static final http.Client _httpClient = http.Client();
 
-  /// Get the actual execution URL, following redirects only once
-  static Future<String> _getExecutionUrl() async {
-    // Check if we have a valid cached URL
-    if (_cachedExecutionUrl != null &&
-        _cacheTimestamp != null &&
-        DateTime.now().difference(_cacheTimestamp!).inHours < 1) {
-      print('🚀 Using cached execution URL (${DateTime.now().difference(_cacheTimestamp!).inMinutes}min old)');
-      return _cachedExecutionUrl!;
-    }
+  // Cache for recent requests to prevent duplicates
+  static final Map<String, Map<String, dynamic>> _requestCache = {};
+  static final Map<String, DateTime> _cacheTimestamps = {};
+  static const Duration _cacheDuration = Duration(seconds: 30);
 
-    try {
-      print('🔍 Resolving redirect URL for first time...');
-      final stopwatch = Stopwatch()..start();
+  // Get Supabase client instance
+  static SupabaseClient get _supabase => Supabase.instance.client;
 
-      // Create a client that follows redirects
-      final client = http.Client();
-      final response = await client.get(Uri.parse(baseUrl)).timeout(const Duration(seconds: 15));
-      client.close();
+  // Get the edge function URL for attendance operations
+  static String get _attendanceFunctionUrl {
+    final supabaseUrl = SupabaseConfig.supabaseUrl;
+    return '$supabaseUrl/functions/v1/attendance-check';
+  }
 
-      stopwatch.stop();
-      print('⏱️ Redirect resolution took: ${stopwatch.elapsedMilliseconds}ms');
+  /// Clear expired cache entries
+  static void _cleanCache() {
+    final now = DateTime.now();
+    final expiredKeys = _cacheTimestamps.entries
+        .where((entry) => now.difference(entry.value) > _cacheDuration)
+        .map((entry) => entry.key)
+        .toList();
 
-      // Use the final request URL after all redirects
-      final finalUrl = response.request?.url.toString() ?? baseUrl;
-
-      // Cache the result
-      _cachedExecutionUrl = finalUrl;
-      _cacheTimestamp = DateTime.now();
-
-      print('✅ Cached new execution URL: $finalUrl');
-      return finalUrl;
-    } catch (e) {
-      print('❌ Failed to resolve redirect URL, using original: $e');
-      // Fallback to original URL if redirect resolution fails
-      return baseUrl;
+    for (final key in expiredKeys) {
+      _requestCache.remove(key);
+      _cacheTimestamps.remove(key);
     }
   }
 
-  /// Make API request with retry mechanism and optimizations
+  /// Get cache key for request parameters
+  static String _getCacheKey(Map<String, String> params) {
+    final sortedParams = Map.fromEntries(
+      params.entries.toList()..sort((a, b) => a.key.compareTo(b.key)),
+    );
+    return jsonEncode(sortedParams);
+  }
+
+  /// Make API request to Supabase Edge Function with optimizations
   static Future<Map<String, dynamic>> _makeRequest(
     Map<String, String> params, {
-    int maxRetries = 2,
+    int maxRetries = 1, // Reduced retries for faster failure
+    Duration timeout = const Duration(seconds: 8), // Reduced timeout
   }) async {
     final requestStopwatch = Stopwatch()..start();
+
+    // Check cache first for duplicate scan prevention
+    _cleanCache();
+    final cacheKey = _getCacheKey(params);
+    if (_requestCache.containsKey(cacheKey)) {
+      _logger.d('⚡ Returning cached response for ${params['qr_token']}');
+      final cachedResult = Map<String, dynamic>.from(_requestCache[cacheKey]!);
+      cachedResult['is_duplicate_scan'] = true;
+      return cachedResult;
+    }
 
     for (int attempt = 0; attempt <= maxRetries; attempt++) {
       try {
         if (attempt > 0) {
-          print('🔄 Retry attempt $attempt/$maxRetries');
-          // Short delay before retry
-          await Future.delayed(Duration(milliseconds: 500 * attempt));
+          _logger.w('🔄 Retry attempt $attempt/$maxRetries');
+          // Shorter delay before retry
+          await Future.delayed(Duration(milliseconds: 300 * attempt));
         }
-
-        // Get the optimized execution URL (cached or resolved)
-        final executionUrl = await _getExecutionUrl();
-        final uri = Uri.parse(executionUrl).replace(queryParameters: params);
-        print('📡 Request URL: $uri');
 
         final networkStopwatch = Stopwatch()..start();
 
-        // Create persistent HTTP client with optimizations
-        final client = http.Client();
-        final request = http.Request('GET', uri);
-
-        // Add performance headers
-        request.headers.addAll({
+        // Pre-build headers for efficiency
+        final session = _supabase.auth.currentSession;
+        final headers = <String, String>{
+          'Content-Type': 'application/json',
           'Accept': 'application/json',
-          'Accept-Encoding': 'gzip, deflate',
-          'Connection': 'keep-alive',
-          'Cache-Control': 'no-cache',
-          'User-Agent': 'QRAttendanceApp/1.0',
-        });
+          'apikey': SupabaseConfig.supabaseAnonKey,
+          'Authorization': session != null
+              ? 'Bearer ${session.accessToken}'
+              : 'Bearer ${SupabaseConfig.supabaseAnonKey}',
+        };
 
-        final streamedResponse = await client.send(request).timeout(
-          Duration(seconds: 15), // 15 second timeout for all attempts
-        );
-        final response = await http.Response.fromStream(streamedResponse);
-        client.close();
+        final requestBody = jsonEncode(params);
+
+        _logger.d('📡 Request: ${params['action']} for ${params['qr_token']}');
+
+        // Use persistent HTTP client for connection reuse
+        final response = await _httpClient
+            .post(
+              Uri.parse(_attendanceFunctionUrl),
+              headers: headers,
+              body: requestBody,
+            )
+            .timeout(timeout);
 
         networkStopwatch.stop();
         requestStopwatch.stop();
 
-        print('⚡ Network request took: ${networkStopwatch.elapsedMilliseconds}ms (attempt ${attempt + 1})');
-        print('📊 Total request time: ${requestStopwatch.elapsedMilliseconds}ms');
-
-        print('Response Status: ${response.statusCode}');
-        print('Response Body: ${response.body}');
+        _logger.d(
+          '⚡ Network: ${networkStopwatch.elapsedMilliseconds}ms, '
+          'Total: ${requestStopwatch.elapsedMilliseconds}ms (attempt ${attempt + 1})',
+        );
 
         if (response.statusCode != 200) {
+          _logger.w('❌ HTTP ${response.statusCode}: ${response.body}');
+
           if (attempt < maxRetries && response.statusCode >= 500) {
-            continue; // Retry server errors
+            continue; // Retry server errors only
           }
-          return {
-            'success': false,
-            'error': 'Server error: ${response.statusCode}',
-          };
+
+          // Parse error message efficiently
+          try {
+            final errorData = jsonDecode(response.body);
+            return {
+              'success': false,
+              'error':
+                  errorData['error'] ?? 'Server error: ${response.statusCode}',
+            };
+          } catch (e) {
+            return {
+              'success': false,
+              'error': 'Server error: ${response.statusCode}',
+            };
+          }
         }
 
         final data = jsonDecode(response.body);
-        if (data == null || data['success'] != true || data['data'] == null) {
+        if (data?['success'] != true) {
           return {
             'success': false,
-            'error': data['error'] ?? 'QR token not found',
+            'error': data?['error'] ?? 'Request failed',
           };
         }
 
-        return {'success': true, 'data': data['data']};
+        // Cache successful responses
+        final result = {
+          'success': true,
+          'data': data['data'],
+          'is_duplicate_scan': data['is_duplicate_scan'] ?? false,
+          if (data['previous_scan_time'] != null)
+            'previous_scan_time': data['previous_scan_time'],
+        };
 
+        _requestCache[cacheKey] = result;
+        _cacheTimestamps[cacheKey] = DateTime.now();
+
+        _logger.i('✅ ${params['action']} successful for ${params['qr_token']}');
+        return result;
       } catch (e) {
-        print('Request Error (attempt ${attempt + 1}): $e');
+        _logger.e('❌ Request error (attempt ${attempt + 1}): $e');
 
         if (attempt == maxRetries) {
           return {
             'success': false,
-            'error': 'Network timeout. Please check your connection and try again.',
+            'error': 'Network timeout. Check connection and try again.',
           };
         }
       }
     }
 
-    return {
-      'success': false,
-      'error': 'Max retries exceeded. Please try again.',
-    };
+    return {'success': false, 'error': 'Max retries exceeded. Try again.'};
   }
 
   /// Check student status by QR token
@@ -146,52 +188,73 @@ class AttendanceService {
     return _makeRequest({'action': 'activate', 'qr_token': qrToken});
   }
 
-  /// Full attendance flow
+  /// Full attendance flow with optimized performance
   /// Logic:
   /// - First scan (sts=inactive): Activate sets in_time, changes sts to active → SUCCESS screen
   /// - Subsequent scans (sts=active): Activate only updates last_scan → DUPLICATE screen
- static Future<Map<String, dynamic>> processAttendance(String qrToken) async {
-  try {
-    print('\n╔══════════════════════════════════════╗');
-    print('║  PROCESS ATTENDANCE STARTED          ║');
-    print('╚══════════════════════════════════════╝');
-    print('QR Token: $qrToken\n');
+  /// - Cached scans: Return cached response immediately → DUPLICATE screen
+  static Future<Map<String, dynamic>> processAttendance(String qrToken) async {
+    try {
+      _logger.i('🎯 Processing attendance for QR: $qrToken');
 
-    // 🔹 Step 1: Call backend activate endpoint
-    final activateResponse = await activateStudent(qrToken);
-    print('activate response: $activateResponse\n');
+      // 🔹 Step 1: Call backend activate endpoint (with caching)
+      final activateResponse = await activateStudent(qrToken);
 
-    if (!activateResponse['success']) {
+      if (!activateResponse['success']) {
+        _logger.w('❌ Activation failed: ${activateResponse['error']}');
+        return {
+          'status': 'error',
+          'error': activateResponse['error'] ?? 'Failed to activate student',
+        };
+      }
+
+      final student = Student.fromJson(activateResponse['data']);
+      final isDuplicate = activateResponse['is_duplicate_scan'] == true;
+      final previousScanTimeRaw = activateResponse['previous_scan_time'];
+
+      // Format previous scan time for display (if available)
+      String? formattedPreviousScanTime;
+      if (previousScanTimeRaw != null && previousScanTimeRaw is String) {
+        try {
+          final dateTime = DateTime.parse(previousScanTimeRaw);
+          formattedPreviousScanTime =
+              '${dateTime.year}-${dateTime.month.toString().padLeft(2, '0')}-${dateTime.day.toString().padLeft(2, '0')} '
+              '${dateTime.hour.toString().padLeft(2, '0')}:${dateTime.minute.toString().padLeft(2, '0')}:${dateTime.second.toString().padLeft(2, '0')}';
+        } catch (e) {
+          // If parsing fails, use the raw value
+          formattedPreviousScanTime = previousScanTimeRaw.toString();
+        }
+      }
+
+      // 🔹 Step 2: Decide based on duplicate flag
+      if (isDuplicate) {
+        _logger.d('⚠️ Duplicate scan detected for ${student.name}');
+        return {
+          'status': 'duplicate',
+          'student': student,
+          'message': 'Student already scanned recently',
+          if (formattedPreviousScanTime != null)
+            'previous_scan_time': formattedPreviousScanTime,
+        };
+      }
+
+      // 🔹 Step 3: Success case
+      _logger.i('✅ Attendance marked for ${student.name} (${student.batch})');
       return {
-        'status': 'error',
-        'error': activateResponse['error'] ?? 'Failed to activate student',
-      };
-    }
-
-    final student = Student.fromJson(activateResponse['data']);
-    final isDuplicate = activateResponse['data']['is_duplicate_scan'] == true;
-
-    // 🔹 Step 2: Decide based on backend flag
-    if (isDuplicate) {
-      print('⚠️ Duplicate scan detected by backend.');
-      return {
-        'status': 'duplicate',
+        'status': 'success',
         'student': student,
-        'message': 'Student already scanned recently',
+        'message': 'Attendance marked successfully',
       };
+    } catch (e) {
+      _logger.e('💥 Error during processAttendance: $e');
+      return {'status': 'error', 'error': 'Unexpected error: $e'};
     }
-
-    // 🔹 Step 3: Success case
-    print('✅ Attendance marked successfully.');
-    return {
-      'status': 'success',
-      'student': student,
-      'message': 'Attendance marked successfully',
-    };
-  } catch (e) {
-    print('❌ Error during processAttendance: $e');
-    return {'status': 'error', 'error': 'Unexpected error: $e'};
   }
-}
 
+  /// Clean up resources when service is no longer needed
+  static void dispose() {
+    _httpClient.close();
+    _requestCache.clear();
+    _cacheTimestamps.clear();
+  }
 }

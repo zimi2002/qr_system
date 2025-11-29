@@ -1,7 +1,26 @@
 import 'package:flutter/material.dart';
-import 'package:qr_attendance_scanner/screens/qr_scanner_screen.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:qr_attendance_scanner/config/supabase_config.dart';
+// import 'package:qr_attendance_scanner/screens/qr_scanner_screen.dart';
+import 'package:qr_attendance_scanner/screens/instant_qr_scanner_screen.dart';
 
-void main() {
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+
+  // Load environment variables from .env file
+  await dotenv.load(fileName: ".env");
+
+  // Initialize Supabase
+  await Supabase.initialize(
+    url: SupabaseConfig.supabaseUrl,
+    anonKey: SupabaseConfig.supabaseAnonKey,
+  );
+
+  // Lock orientation to portrait only
+  await SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
+
   runApp(const MyApp());
 }
 
@@ -31,9 +50,9 @@ class MyApp extends StatelessWidget {
         // tested with just a hot reload.
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
       ),
-      home: const QRScannerScreen(),
+      // home: const QRScannerScreen(), // Use working scanner first
+      home:
+          const InstantQRScannerScreen(), // Instant scanner for faster QR detection
     );
   }
 }
-
-
