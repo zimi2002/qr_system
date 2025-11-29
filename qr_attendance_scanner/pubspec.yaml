@@ -48,6 +48,8 @@ dev_dependencies:
   # package. See that file for information about deactivating specific lint
   # rules and activating additional ones.
   flutter_lints: ^5.0.0
+  flutter_launcher_icons: ^0.13.1
+  flutter_native_splash: ^2.3.10
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec
@@ -62,6 +64,7 @@ flutter:
 
   # To add assets to your application, add an assets section, like this:
   assets:
+    - assets/logo.jpeg
     - assets/lottie/success.json
     - assets/lottie/error.json
     - assets/lottie/duplicate.json
@@ -91,3 +94,34 @@ flutter:
   #
   # For details regarding fonts from package dependencies,
   # see https://flutter.dev/to/font-from-package
+
+# App Icon Configuration
+flutter_launcher_icons:
+  android: true
+  ios: true
+  web:
+    generate: true
+    image_path: "assets/logo.jpeg"
+    background_color: "#ffffff"
+    theme_color: "#ffffff"
+  windows:
+    generate: true
+    image_path: "assets/logo.jpeg"
+    icon_size: 48
+  macos:
+    generate: true
+    image_path: "assets/logo.jpeg"
+  linux:
+    generate: true
+    image_path: "assets/logo.jpeg"
+  image_path: "assets/logo.jpeg"
+  min_sdk_android: 21
+  adaptive_icon_background: "#ffffff"
+  adaptive_icon_foreground: "assets/logo.jpeg"
+
+# Splash Screen Configuration
+flutter_native_splash:
+  color: "#ffffff"
+  image: "assets/logo.jpeg"
+  android: true
+  ios: true

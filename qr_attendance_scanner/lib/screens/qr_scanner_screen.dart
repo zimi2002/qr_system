@@ -1,5 +1,6 @@
 import 'dart:math';
 import 'dart:convert';
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:qr_attendance_scanner/services/attendance_service.dart';
@@ -20,6 +21,8 @@ class _QRScannerScreenState extends State<QRScannerScreen>
   bool isScanned = false;
   bool isProcessing = false;
   late AnimationController _animationController;
+  late MobileScannerController _scannerController;
+  Timer? _debounceTimer;
 
   @override
   void initState() {
@@ -28,12 +31,60 @@ class _QRScannerScreenState extends State<QRScannerScreen>
       vsync: this,
       duration: const Duration(seconds: 3),
     )..repeat();
+
+    // Initialize scanner controller once with optimized settings
+    _scannerController = MobileScannerController(
+      detectionSpeed: DetectionSpeed.noDuplicates, // Faster detection with no duplicates
+      facing: CameraFacing.back,
+    );
   }
 
   @override
   void dispose() {
     _animationController.dispose();
+    _scannerController.dispose();
+    _debounceTimer?.cancel();
     super.dispose();
+  }
+
+  /// Extract QR token from raw value with optimized parsing
+  String _extractQRToken(String rawValue) {
+    // Quick check if it's likely JSON (starts with { or contains qr_token:)
+    if (rawValue.startsWith('{') || rawValue.contains('qr_token')) {
+      try {
+        // Try to parse as JSON
+        final data = jsonDecode(rawValue);
+        if (data is Map<String, dynamic> && data.containsKey('qr_token')) {
+          return data['qr_token'];
+        }
+      } catch (e) {
+        // If JSON parsing fails, fall back to regex
+        final match = RegExp(r'qr_token[:\s]+([^,}\s]+)').firstMatch(rawValue);
+        if (match != null) {
+          return match.group(1)?.trim() ?? rawValue;
+        }
+      }
+    }
+
+    // Return original value if no qr_token found
+    return rawValue;
+  }
+
+  /// Debounced QR detection handler
+  void _handleQRDetection(String rawValue) {
+    // Cancel any existing timer
+    _debounceTimer?.cancel();
+
+    // Set a new timer for debouncing (300ms delay)
+    _debounceTimer = Timer(const Duration(milliseconds: 300), () {
+      if (isScanned || isProcessing) return;
+
+      setState(() => isScanned = true);
+
+      final qrToken = _extractQRToken(rawValue);
+      print('Extracted QR Token: $qrToken');
+      _processAttendance(qrToken);
+    });
   }
 
   /// Process attendance using the service
@@ -128,39 +179,11 @@ class _QRScannerScreenState extends State<QRScannerScreen>
           // Camera Scanner
           MobileScanner(
             fit: BoxFit.cover,
-            controller: MobileScannerController(
-              detectionSpeed: DetectionSpeed.normal,
-              facing: CameraFacing.back,
-            ),
+            controller: _scannerController,
             onDetect: (capture) {
               final barcode = capture.barcodes.first;
               final value = barcode.rawValue ?? '';
-
-              if (isScanned || isProcessing) return;
-              setState(() => isScanned = true);
-
-              // Extract qr_token from the scanned data
-              String qrToken = value;
-              try {
-                // Try to parse as JSON if it's a JSON object
-                final data = jsonDecode(value);
-                if (data is Map<String, dynamic> &&
-                    data.containsKey('qr_token')) {
-                  qrToken = data['qr_token'];
-                }
-              } catch (e) {
-                // If not JSON, look for qr_token pattern in the string
-                // Pattern: "qr_token: nazimd-Bbc1-22F94CF5" or "qr_token:nazimd-Bbc1-22F94CF5"
-                final match = RegExp(
-                  r'qr_token[:\s]+([^,}\s]+)',
-                ).firstMatch(value);
-                if (match != null) {
-                  qrToken = match.group(1)?.trim() ?? value;
-                }
-              }
-
-              print('Extracted QR Token: $qrToken');
-              _processAttendance(qrToken);
+              _handleQRDetection(value);
             },
           ),
 

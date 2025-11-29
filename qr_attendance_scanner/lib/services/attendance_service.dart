@@ -6,15 +6,53 @@ class AttendanceService {
   static const String baseUrl =
       'https://script.google.com/macros/s/AKfycbzeepAa5h97Y1umew6FAdWwHQSla7kbQXkoytifMcpL3EcUnzv0Kn99AepNhhpveeipFg/exec';
 
+  // Cache for the actual execution URL to avoid redirect delays
+  static String? _cachedExecutionUrl;
+  static DateTime? _cacheTimestamp;
+
+  /// Get the actual execution URL, following redirects only once
+  static Future<String> _getExecutionUrl() async {
+    // Check if we have a valid cached URL
+    if (_cachedExecutionUrl != null &&
+        _cacheTimestamp != null &&
+        DateTime.now().difference(_cacheTimestamp!).inHours < 1) {
+      print('Using cached execution URL: $_cachedExecutionUrl');
+      return _cachedExecutionUrl!;
+    }
+
+    try {
+      print('Resolving redirect URL...');
+      // Follow redirects to get the actual execution URL
+      final request = http.Request('GET', Uri.parse(baseUrl));
+      final streamedResponse = await request.send();
+
+      // Get the final URL after redirects
+      final finalUrl = streamedResponse.request!.url.toString();
+
+      // Cache the result
+      _cachedExecutionUrl = finalUrl;
+      _cacheTimestamp = DateTime.now();
+
+      print('Cached new execution URL: $finalUrl');
+      return finalUrl;
+    } catch (e) {
+      print('Failed to resolve redirect URL, using original: $e');
+      // Fallback to original URL if redirect resolution fails
+      return baseUrl;
+    }
+  }
+
   /// Make API request using GET with query parameters (better for Google Apps Script)
   static Future<Map<String, dynamic>> _makeRequest(
     Map<String, String> params,
   ) async {
     try {
-      final uri = Uri.parse(baseUrl).replace(queryParameters: params);
+      // Get the optimized execution URL (cached or resolved)
+      final executionUrl = await _getExecutionUrl();
+      final uri = Uri.parse(executionUrl).replace(queryParameters: params);
       print('Request URL: $uri');
 
-      final response = await http.get(uri).timeout(const Duration(seconds: 15));
+      final response = await http.get(uri).timeout(const Duration(seconds: 8));
 
       print('Response Status: ${response.statusCode}');
       print('Response Body: ${response.body}');
