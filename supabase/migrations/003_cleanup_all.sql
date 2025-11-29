@@ -44,3 +44,4 @@ COMMIT;
 -- SELECT routine_name FROM information_schema.routines WHERE routine_schema = 'public' AND routine_name LIKE '%attendance%';
 -- SELECT trigger_name FROM information_schema.triggers WHERE trigger_schema = 'public' AND trigger_name LIKE '%attendance%';
 
+

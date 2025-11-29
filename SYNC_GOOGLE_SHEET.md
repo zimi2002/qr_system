@@ -175,3 +175,4 @@ After syncing:
 2. Test the attendance scanner app
 3. Check the stats page at `/stats` route
 
+

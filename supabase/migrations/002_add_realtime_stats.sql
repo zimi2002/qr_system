@@ -105,3 +105,4 @@ CREATE TRIGGER attendance_change_notifier
   FOR EACH ROW
   EXECUTE FUNCTION notify_attendance_change();
 
+
