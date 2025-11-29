@@ -5,9 +5,13 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:qr_web_view/config/supabase_config.dart';
 import 'package:qr_web_view/pages/student_page.dart';
 import 'package:qr_web_view/pages/stats_page.dart';
+import 'package:flutter_web_plugins/flutter_web_plugins.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // Use path-based URLs instead of hash-based URLs for web
+  usePathUrlStrategy();
 
   // Load environment variables from .env file
   await dotenv.load(fileName: ".env");
@@ -23,8 +27,7 @@ void main() async {
 
 final GoRouter _router = GoRouter(
   debugLogDiagnostics: true,
-  initialLocation: Uri.base
-      .toString(), // Use the full URL including query parameters
+  initialLocation: Uri.base.path.isEmpty ? '/' : Uri.base.path, // Use path only, not full URL
   routes: [
     GoRoute(
       path: '/stats',

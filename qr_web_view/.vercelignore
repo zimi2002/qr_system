@@ -1,0 +1,9 @@
+.firebase/
+build/
+.dart_tool/
+.idea/
+.vscode/
+*.iml
+*.lock
+.DS_Store
+
