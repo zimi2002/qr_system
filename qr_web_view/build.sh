@@ -10,20 +10,24 @@ echo "🚀 Starting Flutter web build..."
 if ! command -v flutter &> /dev/null; then
     echo "📦 Flutter not found, installing..."
     
-    # Install Flutter
+    # Install Flutter to a local directory
     FLUTTER_VERSION="stable"
-    git clone https://github.com/flutter/flutter.git -b $FLUTTER_VERSION --depth 1
-    export PATH="$PATH:`pwd`/flutter/bin"
+    FLUTTER_DIR="$HOME/flutter"
     
-    # Accept licenses
-    flutter doctor --android-licenses || true
+    if [ ! -d "$FLUTTER_DIR" ]; then
+        git clone https://github.com/flutter/flutter.git -b $FLUTTER_VERSION --depth 1 $FLUTTER_DIR
+    fi
+    
+    export PATH="$PATH:$FLUTTER_DIR/bin"
+    
+    # Precache web dependencies
+    $FLUTTER_DIR/bin/flutter precache --web
     
     echo "✅ Flutter installed"
 fi
 
 # Verify Flutter installation
 flutter --version
-flutter doctor
 
 # Get dependencies
 echo "📥 Getting Flutter dependencies..."
