@@ -16,67 +16,124 @@ class AttendanceService {
     if (_cachedExecutionUrl != null &&
         _cacheTimestamp != null &&
         DateTime.now().difference(_cacheTimestamp!).inHours < 1) {
-      print('Using cached execution URL: $_cachedExecutionUrl');
+      print('🚀 Using cached execution URL (${DateTime.now().difference(_cacheTimestamp!).inMinutes}min old)');
       return _cachedExecutionUrl!;
     }
 
     try {
-      print('Resolving redirect URL...');
-      // Follow redirects to get the actual execution URL
-      final request = http.Request('GET', Uri.parse(baseUrl));
-      final streamedResponse = await request.send();
+      print('🔍 Resolving redirect URL for first time...');
+      final stopwatch = Stopwatch()..start();
 
-      // Get the final URL after redirects
-      final finalUrl = streamedResponse.request!.url.toString();
+      // Create a client that follows redirects
+      final client = http.Client();
+      final response = await client.get(Uri.parse(baseUrl)).timeout(const Duration(seconds: 15));
+      client.close();
+
+      stopwatch.stop();
+      print('⏱️ Redirect resolution took: ${stopwatch.elapsedMilliseconds}ms');
+
+      // Use the final request URL after all redirects
+      final finalUrl = response.request?.url.toString() ?? baseUrl;
 
       // Cache the result
       _cachedExecutionUrl = finalUrl;
       _cacheTimestamp = DateTime.now();
 
-      print('Cached new execution URL: $finalUrl');
+      print('✅ Cached new execution URL: $finalUrl');
       return finalUrl;
     } catch (e) {
-      print('Failed to resolve redirect URL, using original: $e');
+      print('❌ Failed to resolve redirect URL, using original: $e');
       // Fallback to original URL if redirect resolution fails
       return baseUrl;
     }
   }
 
-  /// Make API request using GET with query parameters (better for Google Apps Script)
+  /// Make API request with retry mechanism and optimizations
   static Future<Map<String, dynamic>> _makeRequest(
-    Map<String, String> params,
-  ) async {
-    try {
-      // Get the optimized execution URL (cached or resolved)
-      final executionUrl = await _getExecutionUrl();
-      final uri = Uri.parse(executionUrl).replace(queryParameters: params);
-      print('Request URL: $uri');
+    Map<String, String> params, {
+    int maxRetries = 2,
+  }) async {
+    final requestStopwatch = Stopwatch()..start();
 
-      final response = await http.get(uri).timeout(const Duration(seconds: 8));
+    for (int attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        if (attempt > 0) {
+          print('🔄 Retry attempt $attempt/$maxRetries');
+          // Short delay before retry
+          await Future.delayed(Duration(milliseconds: 500 * attempt));
+        }
 
-      print('Response Status: ${response.statusCode}');
-      print('Response Body: ${response.body}');
+        // Get the optimized execution URL (cached or resolved)
+        final executionUrl = await _getExecutionUrl();
+        final uri = Uri.parse(executionUrl).replace(queryParameters: params);
+        print('📡 Request URL: $uri');
 
-      if (response.statusCode != 200) {
-        return {
-          'success': false,
-          'error': 'Server error: ${response.statusCode}',
-        };
+        final networkStopwatch = Stopwatch()..start();
+
+        // Create persistent HTTP client with optimizations
+        final client = http.Client();
+        final request = http.Request('GET', uri);
+
+        // Add performance headers
+        request.headers.addAll({
+          'Accept': 'application/json',
+          'Accept-Encoding': 'gzip, deflate',
+          'Connection': 'keep-alive',
+          'Cache-Control': 'no-cache',
+          'User-Agent': 'QRAttendanceApp/1.0',
+        });
+
+        final streamedResponse = await client.send(request).timeout(
+          Duration(seconds: 15), // 15 second timeout for all attempts
+        );
+        final response = await http.Response.fromStream(streamedResponse);
+        client.close();
+
+        networkStopwatch.stop();
+        requestStopwatch.stop();
+
+        print('⚡ Network request took: ${networkStopwatch.elapsedMilliseconds}ms (attempt ${attempt + 1})');
+        print('📊 Total request time: ${requestStopwatch.elapsedMilliseconds}ms');
+
+        print('Response Status: ${response.statusCode}');
+        print('Response Body: ${response.body}');
+
+        if (response.statusCode != 200) {
+          if (attempt < maxRetries && response.statusCode >= 500) {
+            continue; // Retry server errors
+          }
+          return {
+            'success': false,
+            'error': 'Server error: ${response.statusCode}',
+          };
+        }
+
+        final data = jsonDecode(response.body);
+        if (data == null || data['success'] != true || data['data'] == null) {
+          return {
+            'success': false,
+            'error': data['error'] ?? 'QR token not found',
+          };
+        }
+
+        return {'success': true, 'data': data['data']};
+
+      } catch (e) {
+        print('Request Error (attempt ${attempt + 1}): $e');
+
+        if (attempt == maxRetries) {
+          return {
+            'success': false,
+            'error': 'Network timeout. Please check your connection and try again.',
+          };
+        }
       }
-
-      final data = jsonDecode(response.body);
-      if (data == null || data['success'] != true || data['data'] == null) {
-        return {
-          'success': false,
-          'error': data['error'] ?? 'QR token not found',
-        };
-      }
-
-      return {'success': true, 'data': data['data']};
-    } catch (e) {
-      print('Request Error: $e');
-      return {'success': false, 'error': 'Network or parsing error: $e'};
     }
+
+    return {
+      'success': false,
+      'error': 'Max retries exceeded. Please try again.',
+    };
   }
 
   /// Check student status by QR token

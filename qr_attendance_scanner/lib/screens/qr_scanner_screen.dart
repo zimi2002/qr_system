@@ -20,9 +20,11 @@ class _QRScannerScreenState extends State<QRScannerScreen>
   String? scannedData;
   bool isScanned = false;
   bool isProcessing = false;
+  String _processingMessage = "Processing attendance...";
   late AnimationController _animationController;
   late MobileScannerController _scannerController;
   Timer? _debounceTimer;
+  Timer? _timeoutTimer;
 
   @override
   void initState() {
@@ -34,7 +36,7 @@ class _QRScannerScreenState extends State<QRScannerScreen>
 
     // Initialize scanner controller once with optimized settings
     _scannerController = MobileScannerController(
-      detectionSpeed: DetectionSpeed.noDuplicates, // Faster detection with no duplicates
+      detectionSpeed: DetectionSpeed.normal, // Allow repeated scans
       facing: CameraFacing.back,
     );
   }
@@ -44,6 +46,7 @@ class _QRScannerScreenState extends State<QRScannerScreen>
     _animationController.dispose();
     _scannerController.dispose();
     _debounceTimer?.cancel();
+    _timeoutTimer?.cancel();
     super.dispose();
   }
 
@@ -70,19 +73,25 @@ class _QRScannerScreenState extends State<QRScannerScreen>
     return rawValue;
   }
 
-  /// Debounced QR detection handler
+  /// QR detection handler with debounce to prevent duplicate rapid scans
   void _handleQRDetection(String rawValue) {
-    // Cancel any existing timer
+    // Immediate guard check for performance
+    if (isScanned || isProcessing) return;
+
+    // Cancel any existing debounce timer
     _debounceTimer?.cancel();
 
-    // Set a new timer for debouncing (300ms delay)
-    _debounceTimer = Timer(const Duration(milliseconds: 300), () {
+    // Set a short debounce to prevent rapid duplicate scans of the same QR
+    _debounceTimer = Timer(const Duration(milliseconds: 500), () {
       if (isScanned || isProcessing) return;
 
-      setState(() => isScanned = true);
+      setState(() {
+        isScanned = true;
+        scannedData = "QR Code detected...";
+      });
 
       final qrToken = _extractQRToken(rawValue);
-      print('Extracted QR Token: $qrToken');
+      print('🔍 Extracted QR Token: $qrToken');
       _processAttendance(qrToken);
     });
   }
@@ -91,13 +100,44 @@ class _QRScannerScreenState extends State<QRScannerScreen>
   Future<void> _processAttendance(String qrToken) async {
     if (isProcessing) return;
 
+    // Pause animation during processing to save resources
+    _animationController.stop();
+
     setState(() {
       isProcessing = true;
       scannedData = qrToken;
+      _processingMessage = "Connecting to server...";
+    });
+
+    // Start timeout timer for user feedback
+    _timeoutTimer = Timer(const Duration(seconds: 3), () {
+      if (mounted && isProcessing) {
+        setState(() {
+          _processingMessage = "Still processing... Please wait";
+        });
+      }
+    });
+
+    // Add progress updates
+    Timer(const Duration(seconds: 6), () {
+      if (mounted && isProcessing) {
+        setState(() {
+          _processingMessage = "Network is slow... Please wait";
+        });
+      }
+    });
+
+    Timer(const Duration(seconds: 10), () {
+      if (mounted && isProcessing) {
+        setState(() {
+          _processingMessage = "Almost there... Please be patient";
+        });
+      }
     });
 
     try {
       final result = await AttendanceService.processAttendance(qrToken);
+      _timeoutTimer?.cancel();
 
       if (!mounted) return;
 
@@ -160,10 +200,21 @@ class _QRScannerScreenState extends State<QRScannerScreen>
   }
 
   void _resetScanning() {
+    // Cancel any pending timers
+    _timeoutTimer?.cancel();
+
+    // Resume animation when ready to scan again
+    _animationController.repeat();
+
     setState(() {
       isScanned = false;
       isProcessing = false;
+      scannedData = null; // Clear previous scan data
+      _processingMessage = "Processing attendance...";
     });
+
+    // Restart the scanner to allow new detections
+    _scannerController.start();
   }
 
   @override
@@ -220,7 +271,7 @@ class _QRScannerScreenState extends State<QRScannerScreen>
                 children: [
                   Text(
                     isProcessing
-                        ? "Processing attendance..."
+                        ? _processingMessage
                         : "Align the QR code within the square",
                     style: TextStyle(
                       color: Colors.white.withOpacity(0.95),
